@@ -4,7 +4,7 @@ this was a project I worked on for a course I had in my college, the gyst of it 
 
 the basic working goes like this - 
 1) opencv tracks the position of the ball on the screen with the help of a camera placed directly above the setup, the opencv code detects all sorts of circular objects and is independent of color, the houghcircles    function was used to do this.
-
+   ![Screenshot 2025-04-10 145549](https://github.com/user-attachments/assets/6e466812-5560-42e1-9ce8-f01e6b62958f)
 2) It calculates the error of the ball as the distance between the centre of the ball and the centre of the plate, this would be more accurate if you placed a amrker on the middle of the plate but I just tried to      centre the camera as best as I could.
 
 3) The pid then returns a correction value based on the distance and velocity of the ball away from the centre which is processed and scaled and returned as the angle that the servo motor should move up or down by

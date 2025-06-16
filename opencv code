@@ -1,0 +1,117 @@
+import cv2
+import numpy as np
+import serial
+import time
+import math 
+
+
+# Serial setup
+try:
+    arduino = serial.Serial('COM5', 115200, timeout=1)
+    arduino.flushInput()
+    time.sleep(3)
+except serial.SerialException as e:
+    print(f"Serial connection error: {e}")
+    exit()
+
+# Camera setup
+cap = cv2.VideoCapture(0)
+cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+frame_width, frame_height = 640, 480
+center_x, center_y = frame_width // 2, frame_height // 2
+
+MAX_PID_OUTPUT = 1000
+SERVO_LIMIT = 10
+
+# PID constants
+Kp = 20.0
+Ki = 0.80
+Kd = 1.00
+
+def scale_pid_output(pid_val, max_output=MAX_PID_OUTPUT, servo_limit=SERVO_LIMIT):
+    #softening the range 
+    softened_input = pid_val / (max_output*2.5)  
+    scaled = math.tanh(softened_input)
+    return int(scaled * servo_limit)
+
+# PID state
+prev_error_x = prev_error_y = 0
+integral_x = integral_y = 0
+last_time = time.time()
+INTEGRAL_LIMIT = 10
+
+def pid_control(error, prev_error, integral, dt=0.01):
+    integral += error * dt
+    integral = max(min(integral, INTEGRAL_LIMIT), -INTEGRAL_LIMIT)
+
+    derivative = (error - prev_error) / dt
+    derivative = 0.7 * derivative + 0.3 * (prev_error / dt)
+
+    output = Kp * error + Ki * integral + Kd * derivative
+    return output, integral
+
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        print("Camera error.")
+        break
+
+    now = time.time()
+    dt = now - last_time
+    if dt == 0:
+        dt = 0.01  # just in case
+
+    frame = cv2.resize(frame, (frame_width, frame_height))
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (9, 9), 2)
+
+    circles = cv2.HoughCircles(blurred, cv2.HOUGH_GRADIENT, dp=1.2, minDist=50,
+                               param1=100, param2=30, minRadius=20, maxRadius=80)
+
+    if circles is not None:
+        circles = np.round(circles[0, :]).astype("int")
+        x, y, r = circles[0]
+        xpos, ypos = x, y
+        cv2.circle(frame, (x, y), r, (0, 255, 0), 3)
+        cv2.circle(frame, (x, y), 5, (0, 0, 255), -1)
+
+        error_x = center_x - xpos
+        error_y = center_y - ypos
+
+        #dead zone
+        if abs(error_x) < 10:
+            error_x = 0
+        if abs(error_y) < 10:
+            error_y = 0
+
+
+        pid_x_raw, integral_x = pid_control(error_x, prev_error_x, integral_x, dt)
+        pid_y_raw, integral_y = pid_control(error_y, prev_error_y, integral_y, dt)
+
+        scaled_x = scale_pid_output(pid_x_raw)
+        scaled_y = scale_pid_output(pid_y_raw)
+
+        try:
+            command = f"{scaled_x},{scaled_y}\n"
+            arduino.write(command.encode('utf-8'))
+            arduino.flush()  # ensure it's pushed through
+            time.sleep(0.01)
+        except serial.SerialException as e:
+            print(f"Serial error: {e}")
+            break
+
+        prev_error_x = error_x
+        prev_error_y = error_y
+        last_time = now
+
+        print(f"Ball: ({xpos}, {ypos}) | PID: ({scaled_x}, {scaled_y})")
+    
+    cv2.circle(frame, (320, 240), 2, (0, 255, 0), 2)
+    cv2.imshow("Ping Pong Ball Tracker", frame)
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()
+arduino.close()
